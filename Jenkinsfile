@@ -1,0 +1,97 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_IMAGE = 'jaff2003/my-java-app'
+        DOCKER_TAG   = 'latest'
+    }
+
+    stages {
+        stage('Git Checkout') {
+            steps {
+                echo 'Checking out code from Git...'
+                checkout scm
+            }
+        }
+
+
+        stage('Build with Maven') {
+            steps {
+                echo 'Building with Maven...'
+                sh 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('Build & Push Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                script {
+                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+
+                    echo 'Pushing Docker image...'
+                    withCredentials([usernamePassword(credentialsId: 'docker-hub-new-pat', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                        sh """
+                            echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
+                            docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        """
+                    }
+                }
+            }
+        }
+
+       /* stage('Deploy to Kubernetes') {
+            steps {
+                echo 'Deploying to Kubernetes...'
+                script {
+                    withCredentials([string(credentialsId: 'kubeconfig-content', variable: 'KUBECONFIG_CONTENT')]) {
+                        sh """
+                            mkdir -p ~/.kube
+                            echo "\$KUBECONFIG_CONTENT" > ~/.kube/config
+                            chmod 600 ~/.kube/config
+
+                            # Vérification kubeconfig
+                            kubectl version --client
+                            kubectl config current-context
+
+                            # Création du namespace si nécessaire
+                            if ! kubectl get namespace devops &>/dev/null; then
+                                kubectl create namespace devops
+                            fi
+
+                            # Déploiements
+                            kubectl apply -f kubernetes/mysql-deployment.yaml -n devops --validate=false
+                            kubectl apply -f kubernetes/spring-deployment.yaml -n devops --validate=false
+
+                            # Redémarrage de l'app Spring si besoin
+                            kubectl rollout restart deployment spring-app -n devops || echo "INFO: Deployment may not exist yet"
+                        """
+                    }
+                }
+            }
+        }*/
+
+        stage('Verify Deployment') {
+            steps {
+                echo 'Verifying deployment...'
+                script {
+                    sh """
+                        export KUBECONFIG=~/.kube/config
+                        kubectl get pods -n devops || echo "Could not list pods"
+                        kubectl get svc -n devops || echo "Could not list services"
+                        kubectl get deployments -n devops || echo "Could not list deployments"
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '✅ Pipeline completed successfully!'
+        }
+        failure {
+            echo '❌ Pipeline failed!'
+        }
+    }
+
+}
